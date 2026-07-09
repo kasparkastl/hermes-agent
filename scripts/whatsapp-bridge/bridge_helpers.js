@@ -262,6 +262,38 @@ function formatContactsText(contacts) {
   return `[Contacts: ${names.join(', ') || contacts.length}]`;
 }
 
+function safeContactFilename(displayName = 'contact') {
+  const cleaned = String(displayName || 'contact')
+    .replace(/[^a-zA-Z0-9._ -]+/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80);
+  return cleaned || 'contact';
+}
+
+function ensureVCardForContact(contact = {}) {
+  const raw = String(contact.vcard || '').trim();
+  if (raw) return raw.endsWith('\n') ? raw : `${raw}\n`;
+
+  const name = String(contact.displayName || 'Unknown Contact').trim() || 'Unknown Contact';
+  return [
+    'BEGIN:VCARD',
+    'VERSION:3.0',
+    `FN:${name}`,
+    'END:VCARD',
+    '',
+  ].join('\r\n');
+}
+
+function buildVCardDocumentContent(contactOrContacts, displayName = 'contacts') {
+  const contacts = Array.isArray(contactOrContacts) ? contactOrContacts : [contactOrContacts];
+  const vcards = contacts
+    .filter(Boolean)
+    .map(contact => ensureVCardForContact(contact));
+  if (vcards.length) return vcards.join('\n');
+  return ensureVCardForContact({ displayName });
+}
+
 function formatReactionText(reaction) {
   const emoji = reaction.text || '';
   const target = reaction.key?.id || '';
@@ -349,6 +381,22 @@ export async function extractBridgeEvent({
     }
   };
 
+  const saveVCardDocument = async ({ contactOrContacts, displayName }) => {
+    const dir = cacheDirs.document;
+    if (!dir) return;
+    const writer = writeMediaFile || defaultWriteMediaFile;
+    const fileBase = safeContactFilename(displayName || 'contacts');
+    const content = buildVCardDocumentContent(contactOrContacts, displayName || 'contacts');
+    const saved = await writer({
+      buffer: Buffer.from(content, 'utf8'),
+      dir,
+      prefix: 'vcards',
+      ext: '.vcf',
+      fileName: `${fileBase}.vcf`,
+    });
+    if (saved) mediaUrls.push(saved);
+  };
+
   if (messageContent.conversation) {
     body = messageContent.conversation;
     nativeType = 'conversation';
@@ -408,22 +456,31 @@ export async function extractBridgeEvent({
     body = formatLocationText(item, isLive);
     nativeMetadata.location = locationMetadata(item, isLive);
   } else if (messageContent.contactMessage) {
+    const contact = messageContent.contactMessage;
     mediaType = 'contact';
     nativeType = 'contactMessage';
-    body = formatContactText(messageContent.contactMessage);
+    body = formatContactText(contact);
+    hasMedia = true;
+    mime = 'text/vcard';
+    fileName = `${safeContactFilename(contact.displayName || 'contact')}.vcf`;
     nativeMetadata.contact = {
-      displayName: messageContent.contactMessage.displayName || '',
-      vcard: messageContent.contactMessage.vcard || '',
+      displayName: contact.displayName || '',
+      vcard: contact.vcard || '',
     };
+    await saveVCardDocument({ contactOrContacts: contact, displayName: contact.displayName || 'contact' });
   } else if (messageContent.contactsArrayMessage) {
     const contacts = messageContent.contactsArrayMessage.contacts || [];
     mediaType = 'contacts';
     nativeType = 'contactsArrayMessage';
     body = formatContactsText(contacts);
+    hasMedia = true;
+    mime = 'text/vcard';
+    fileName = 'contacts.vcf';
     nativeMetadata.contacts = contacts.map(contact => ({
       displayName: contact.displayName || '',
       vcard: contact.vcard || '',
     }));
+    await saveVCardDocument({ contactOrContacts: contacts, displayName: 'contacts' });
   } else if (messageContent.reactionMessage) {
     mediaType = 'reaction';
     nativeType = 'reactionMessage';

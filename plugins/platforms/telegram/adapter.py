@@ -3182,6 +3182,12 @@ class TelegramAdapter(BasePlatformAdapter):
                 filters.LOCATION | getattr(filters, "VENUE", filters.LOCATION),
                 self._handle_location_message
             ))
+            contact_filter = getattr(filters, "CONTACT", None)
+            if contact_filter is not None:
+                self._app.add_handler(TelegramMessageHandler(
+                    contact_filter,
+                    self._handle_contact_message
+                ))
             self._app.add_handler(TelegramMessageHandler(
                 filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.VOICE | filters.Document.ALL | filters.Sticker.ALL,
                 self._handle_media_message
@@ -7574,6 +7580,71 @@ class TelegramAdapter(BasePlatformAdapter):
 
         event = self._build_message_event(msg, MessageType.LOCATION, update_id=update.update_id)
         event.text = "\n".join(parts)
+        event = self._apply_telegram_group_observe_attribution(event)
+        await self.handle_message(event)
+
+    async def _handle_contact_message(self, update, context) -> None:
+        """Handle incoming Telegram contact/vCard shares as cached .vcf documents."""
+        msg = self._effective_update_message(update)
+        if not msg:
+            return
+        if not self._is_user_authorized_from_message(msg):
+            logger.warning(
+                "[Telegram] Blocked unauthorized user %s in chat %s",
+                getattr(getattr(msg, "from_user", None), "id", None),
+                getattr(getattr(msg, "chat", None), "id", None),
+            )
+            return
+        if not self._should_process_message(msg):
+            if self._should_observe_unmentioned_group_message(msg):
+                self._observe_unmentioned_group_message(msg, MessageType.DOCUMENT, update_id=update.update_id)
+            return
+
+        contact = getattr(msg, "contact", None)
+        if not contact:
+            return
+
+        first_name = getattr(contact, "first_name", "") or ""
+        last_name = getattr(contact, "last_name", "") or ""
+        phone = getattr(contact, "phone_number", "") or ""
+        user_id = getattr(contact, "user_id", None)
+        vcard_raw = getattr(contact, "vcard", "") or ""
+
+        if vcard_raw:
+            vcf_content = vcard_raw if vcard_raw.endswith("\n") else f"{vcard_raw}\n"
+        else:
+            full_name = f"{first_name} {last_name}".strip() or "Unknown Contact"
+            vcf_lines = [
+                "BEGIN:VCARD",
+                "VERSION:3.0",
+                f"FN:{full_name}",
+                f"N:{last_name};{first_name};;;",
+            ]
+            if phone:
+                vcf_lines.append(f"TEL;TYPE=CELL:{phone}")
+            if user_id:
+                vcf_lines.append(f"X-TELEGRAM-ID:{user_id}")
+            vcf_lines.append("END:VCARD")
+            vcf_content = "\r\n".join(vcf_lines) + "\r\n"
+
+        full_name = f"{first_name} {last_name}".strip() or "Unknown Contact"
+        display_name = re.sub(r'[^\w.\- ]', '_', full_name).strip() or "contact"
+        vcf_path = cache_document_from_bytes(
+            vcf_content.encode("utf-8"),
+            f"{display_name}.vcf",
+        )
+
+        parts = [f"[The user shared a contact: {full_name}]"]
+        if phone:
+            parts.append(f"Phone: {phone}")
+        if user_id:
+            parts.append(f"Telegram user ID: {user_id}")
+        parts.append(f"\n[Content of {display_name}.vcf]:\n{vcf_content}")
+
+        event = self._build_message_event(msg, MessageType.DOCUMENT, update_id=update.update_id)
+        event.text = "\n".join(parts)
+        event.media_urls = [vcf_path]
+        event.media_types = ["text/vcard"]
         event = self._apply_telegram_group_observe_attribution(event)
         await self.handle_message(event)
 

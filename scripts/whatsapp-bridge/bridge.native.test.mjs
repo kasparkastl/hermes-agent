@@ -187,6 +187,35 @@ import {
 }
 
 {
+  const cacheDir = mkdtempSync(path.join(tmpdir(), 'hermes-wa-vcf-'));
+  const event = await extractBridgeEvent({
+    msg: {
+      key: { id: 'contact-1', remoteJid: '15551234567@s.whatsapp.net', fromMe: false },
+      messageTimestamp: 123,
+      message: {
+        contactMessage: {
+          displayName: 'Ada Lovelace',
+          vcard: 'BEGIN:VCARD\nVERSION:3.0\nFN:Ada Lovelace\nTEL;TYPE=CELL:+491234\nEND:VCARD\n',
+        },
+      },
+    },
+    chatId: '15551234567@s.whatsapp.net',
+    senderId: '15550001111@s.whatsapp.net',
+    senderNumber: '15550001111',
+    cacheDirs: { document: cacheDir },
+  });
+
+  assert.equal(event.hasMedia, true);
+  assert.equal(event.mediaType, 'contact');
+  assert.equal(event.mime, 'text/vcard');
+  assert.equal(event.fileName, 'Ada_Lovelace.vcf');
+  assert.equal(event.nativeType, 'contactMessage');
+  assert.equal(event.mediaUrls.length, 1);
+  assert.ok(event.mediaUrls[0].endsWith('_Ada_Lovelace.vcf'), event.mediaUrls[0]);
+  console.log('  ✓ inbound contact cards are preserved as cached vCard documents');
+}
+
+{
   const event = await extractBridgeEvent({
     msg: {
       key: { id: 'poll-1', remoteJid: '15551234567@s.whatsapp.net', fromMe: false },

@@ -1353,6 +1353,7 @@ SUPPORTED_DOCUMENT_TYPES = {
     ".ts": "text/plain",
     ".py": "text/plain",
     ".sh": "text/plain",
+    ".vcf": "text/vcard",
 }
 
 
@@ -1380,6 +1381,7 @@ _TEXT_INJECT_EXTENSIONS = {
     ".sql", ".graphql", ".proto", ".tf", ".hcl",
     ".dockerfile", ".makefile", ".cmake", ".gradle",
     ".rst", ".tex", ".srt", ".vtt", ".diff", ".patch",
+    ".vcf",
 }
 
 
